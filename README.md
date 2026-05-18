@@ -35,3 +35,36 @@ cd ~/coder-podman
 
 Data is stored in Podman volumes `coder_data` and `coder_home` under
 `~/.local/share/containers-coder/storage`.
+
+## Podman socket for templates
+
+The Coder container bind-mounts the host rootless Podman API socket at
+`/var/run/docker.sock` and exports:
+
+```bash
+DOCKER_HOST=unix:///var/run/docker.sock
+```
+
+Terraform templates using the `kreuzwerker/docker` provider should use the
+in-container socket path:
+
+```hcl
+provider "docker" {
+  host = "unix:///var/run/docker.sock"
+}
+```
+
+`start-coder-podman.sh` runs the Coder container as container UID `0:0` so it
+maps back to the host user that owns the rootless Podman socket. PostgreSQL and
+Coder data remain in the existing `coder_data` and `coder_home` volumes.
+
+Validation commands:
+
+```bash
+curl --unix-socket /run/user/$(id -u)/podman/podman.sock http://d/_ping
+./status-coder-podman.sh
+podman --root ~/.local/share/containers-coder/storage \
+  --runroot /tmp/podman-coder-runroot-$(id -u) \
+  --storage-driver overlay \
+  inspect coder --format '{{.Config.User}} {{json .Config.Env}} {{json .Mounts}}'
+```

@@ -79,13 +79,43 @@ if ! "${podman_cmd[@]}" volume exists coder_home; then
   "${podman_cmd[@]}" volume create coder_home >/dev/null
 fi
 
+coder_docker_host="unix:///var/run/docker.sock"
+
+if "${podman_cmd[@]}" container exists coder; then
+  recreate_coder=0
+
+  coder_user="$("${podman_cmd[@]}" inspect coder --format '{{.Config.User}}')"
+  coder_env="$("${podman_cmd[@]}" inspect coder --format '{{json .Config.Env}}')"
+  coder_mounts="$("${podman_cmd[@]}" inspect coder --format '{{json .Mounts}}')"
+
+  if [[ "${coder_user}" != "0:0" ]]; then
+    recreate_coder=1
+  fi
+
+  if [[ "${coder_env}" != *"DOCKER_HOST=${coder_docker_host}"* ]]; then
+    recreate_coder=1
+  fi
+
+  if [[ "${coder_mounts}" != *"\"Source\":\"${podman_sock}\""* ]] \
+    || [[ "${coder_mounts}" != *"\"Destination\":\"/var/run/docker.sock\""* ]]; then
+    recreate_coder=1
+  fi
+
+  if [[ "${recreate_coder}" -eq 1 ]]; then
+    "${podman_cmd[@]}" stop coder >/dev/null 2>&1 || true
+    "${podman_cmd[@]}" rm coder >/dev/null
+  fi
+fi
+
 if ! "${podman_cmd[@]}" container exists coder; then
   "${podman_cmd[@]}" run -d \
     --name coder \
     --pod coder-podman \
+    --user 0:0 \
     -e CODER_PG_CONNECTION_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}?sslmode=disable" \
     -e CODER_HTTP_ADDRESS="0.0.0.0:7080" \
     -e CODER_ACCESS_URL="${CODER_ACCESS_URL}" \
+    -e DOCKER_HOST="${coder_docker_host}" \
     -v "${podman_sock}:/var/run/docker.sock" \
     -v coder_home:/home/coder \
     "${CODER_REPO}:${CODER_VERSION}" >/dev/null
